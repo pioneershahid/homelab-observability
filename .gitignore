@@ -1,0 +1,22 @@
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+**/discord-webhook-url
+**/*secret*
+**/*token*
+
+# Backups
+*.bak
+*.backup
+*.old
+
+# Generated state and runtime data
+**/data/
+**/wal/
+*.log
+
+# Local tooling and OS files
+.DS_Store
+.idea/
+.vscode/
