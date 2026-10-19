@@ -1,8 +1,15 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   prometheus:
     image: prom/prometheus:v3.5.0
     container_name: prometheus
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -20,6 +27,7 @@ services:
     image: grafana/grafana:12.1.0
     container_name: grafana
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       - prometheus
       - loki
@@ -40,6 +48,7 @@ services:
     image: grafana/loki:3.5.0
     container_name: loki
     restart: unless-stopped
+    logging: *default-logging
     command:
       - -config.file=/etc/loki/loki-config.yaml
     volumes:
@@ -53,6 +62,7 @@ services:
     container_name: alloy
     restart: unless-stopped
     user: root
+    logging: *default-logging
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -66,11 +76,11 @@ services:
     networks:
       - monitoring
 
-
   pve-exporter:
     image: prompve/prometheus-pve-exporter:latest
     container_name: pve-exporter
     restart: unless-stopped
+    logging: *default-logging
     environment:
       PVE_USER: ${PVE_USER}
       PVE_TOKEN_NAME: ${PVE_TOKEN_NAME}
@@ -83,6 +93,7 @@ services:
     image: prom/blackbox-exporter:v0.27.0
     container_name: blackbox-exporter
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - monitoring
     command:
@@ -90,11 +101,11 @@ services:
     volumes:
       - ./blackbox/blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
 
-
   alertmanager:
     image: prom/alertmanager:v0.28.1
     container_name: alertmanager
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "192.168.1.99:9093:9093"
     command:
