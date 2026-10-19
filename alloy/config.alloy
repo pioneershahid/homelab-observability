@@ -8,20 +8,73 @@ loki.write "local" {
   }
 }
 
-local.file_match "docker" {
-  path_targets = [{
-    __path__ = "/var/lib/docker/containers/*/*.log",
-    job      = "docker",
-  }]
+// Discover running Docker containers to retrieve metadata (names, labels)
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
 }
 
+// Relabel Docker targets to map log file paths and clean container names
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  // Map Docker host log path pattern
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label  = "__path__"
+    replacement   = "/var/lib/docker/containers/$1/*-json.log"
+  }
+
+  // Extract clean container name (strip leading slash)
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // Add compose service name if available
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Static job label
+  rule {
+    target_label = "job"
+    replacement  = "docker"
+  }
+}
+
+// Process logs: parse JSON docker wrapper, auto-detect log levels
 loki.process "docker" {
+  // Parse standard Docker log JSON wrapper
   stage.docker {}
+
+  // Parse log level from common patterns (JSON or logfmt or standard text)
+  stage.regex {
+    expression = "(?i)(level|lvl|severity)=(?P<level>[a-zA-Z]+)|\\[(?P<level_bracket>[a-zA-Z]+)\\]|(?P<level_word>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)"
+  }
+
+  // Normalize level label
+  stage.template {
+    source   = "level"
+    template = "{{ if .level }}{{ .level | ToLower }}{{ else if .level_bracket }}{{ .level_bracket | ToLower }}{{ else if .level_word }}{{ .level_word | ToLower }}{{ else }}unknown{{ end }}"
+  }
+
+  // Promote level and container to indexed labels
+  stage.labels {
+    values = {
+      level     = "",
+      container = "",
+      service   = "",
+    }
+  }
 
   forward_to = [loki.write.local.receiver]
 }
 
+// Read log files based on discovered targets
 loki.source.file "docker" {
-  targets    = local.file_match.docker.targets
+  targets    = discovery.relabel.docker_logs.targets
   forward_to = [loki.process.docker.receiver]
 }
+

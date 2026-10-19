@@ -1,76 +1,97 @@
-# Homelab Observability Platform
+# Homelab Observability & Incident Response Platform
 
-A self-hosted monitoring and alerting platform built to centralize infrastructure metrics, application availability, logs, dashboards, and notifications for a Proxmox homelab.
+A production-grade, self-hosted observability and incident response platform built to centralize infrastructure metrics, microservice availability, enriched container logs, actionable alerts, and automated triage runbooks for a Proxmox homelab.
 
-The project uses configuration-as-code for Prometheus alert rules, Grafana dashboards and data sources, Loki, Alloy, Blackbox Exporter, and Alertmanager.
+The stack uses configuration-as-code for Prometheus alert rules, Grafana dashboards and data sources, Loki, Alloy log pipelines, Blackbox Exporter, and Alertmanager with Discord incident notifications.
 
-## Architecture
+## Architecture & Data Flow
 
 ```mermaid
 flowchart TD
-    PVE[Proxmox VE]
-    HA[Home Assistant<br/>192.168.1.2]
-    PVEExporter[Prometheus PVE Exporter]
-    Blackbox[Blackbox Exporter]
-    Prom[Prometheus]
-    Grafana[Grafana]
-    Alloy[Grafana Alloy]
-    Loki[Loki]
-    AM[Alertmanager]
-    Discord[Discord Webhook]
+    subgraph Infrastructure & Apps
+        PVE[Proxmox VE Node & Guests]
+        HA[Home Assistant]
+        Containers[Docker Containers]
+    end
+
+    subgraph Collection & Processing
+        PVEExporter[Prometheus PVE Exporter]
+        Blackbox[Blackbox Exporter]
+        Alloy[Grafana Alloy<br/>Docker Socket & Log Pipeline]
+    end
+
+    subgraph Storage & Evaluation
+        Prom[Prometheus<br/>Metric Evaluation]
+        Loki[Grafana Loki<br/>Structured & Enriched Logs]
+    end
+
+    subgraph Visualization & Incident Action
+        Grafana[Grafana Dashboards & Explore]
+        AM[Alertmanager<br/>Routing & Deduplication]
+        Discord[Discord Incident Channel<br/>Actionable Cards + Runbooks]
+    end
 
     PVE --> PVEExporter --> Prom
     HA --> Blackbox --> Prom
+    Containers -->|/var/run/docker.sock metadata| Alloy
+    Containers -->|stdout/stderr json logs| Alloy
+    Alloy -->|Enriched logs: container, level, service| Loki
+
     Prom --> Grafana
-    Alloy --> Loki --> Grafana
-    Prom --> AM --> Discord
+    Loki --> Grafana
+
+    Prom -->|Metric & Log Rule Breaches| AM
+    AM -->|Rich Incident Alert with Runbook| Discord
 ```
+
+## Production Observability Highlights
+
+- **Enriched Container Log Pipelines**: Unlike raw log scraping, Grafana Alloy interrogates `/var/run/docker.sock` to extract real container names and Compose service metadata. In addition, regex/template stages normalize log severity levels (`info`, `warn`, `error`, `critical`) into indexable Loki labels.
+- **Actionable Alert Notifications**: Alerts delivered to Discord are not plain notifications. They follow production SRE principles by including:
+  - Clear **Incident Severity & Summary**.
+  - Direct **Runbook commands** (e.g., immediate diagnostic commands).
+  - Remediation **Action steps** (e.g., safe restart commands).
+  - Deep links directly into Grafana metrics or Loki filtered log views.
+- **Log Spike & Health Rules**: Alongside infrastructure rules (CPU, guest availability, HTTP status), alert rules evaluate sustained bursts of error logs across containers (`ContainerErrorLogSpike`).
+- **Secret Separation**: Sensitive tokens and webhooks (such as Discord credentials) are mounted strictly via container secrets/read-only bind mounts (`webhook_url_file`).
 
 ## Components
 
-| Component | Purpose |
-|---|---|
-| Prometheus | Scrapes metrics and evaluates alert rules |
-| Prometheus PVE Exporter | Collects Proxmox VE metrics |
-| Blackbox Exporter | Checks Home Assistant HTTP availability |
-| Grafana | Visualizes metrics and logs |
-| Loki | Stores and queries logs |
-| Grafana Alloy | Collects Docker container logs |
-| Alertmanager | Groups and routes alerts |
-| Discord webhook | Delivers alert notifications |
+| Component | Role | Details |
+|---|---|---|
+| **Prometheus** | Metric collection & rule engine | Evaluates scrape targets and threshold alerting |
+| **Grafana Loki** | Centralized log database | Indexing labels with TSDB schema and structured metadata |
+| **Grafana Alloy** | Observability agent | Discovers Docker containers, extracts levels, ships to Loki |
+| **Alertmanager** | Incident router | Groups alerts, inhibits duplicates, sends Discord runbooks |
+| **Grafana** | Unified visualization | Pre-provisioned dashboards and correlated log exploration |
+| **Blackbox Exporter** | Synthetic availability checks | HTTP probes against service endpoints |
+| **PVE Exporter** | Hypervisor telemetry | Scrapes node and LXC/QEMU guest status from Proxmox |
 
-## Environment
+## Production Incident Workflow (Triage in Action)
 
-The current deployment runs in a Debian-based Proxmox LXC with Docker Compose.
+When an incident triggers:
+1. **Detection**: Prometheus detects a breach (e.g. `HomeAssistantDown` or `ContainerErrorLogSpike`).
+2. **Notification**: Alertmanager groups related alerts and posts a rich notification card to Discord:
+   - Includes **Summary**, **Description**, **Runbook**, and **Remediation Action**.
+3. **Investigation**: Engineer clicks the dashboard/log link directly to Grafana Explore to inspect correlated error traces.
+4. **Resolution**: Once the condition recovers, Alertmanager dispatches a green `[RESOLVED]` confirmation card.
 
-| Service | Address |
-|---|---|
-| Grafana | `http://192.168.1.99:3000` |
-| Prometheus | `http://192.168.1.99:9090` |
-| Alertmanager | `http://192.168.1.99:9093` |
-| Home Assistant | `http://192.168.1.2:8123` |
+### Running an End-to-End Incident Simulation
 
-These addresses reflect the current homelab. Adjust them for other environments.
+To verify that the full incident response pipeline functions end-to-end:
 
-## Monitoring and alerting
+```bash
+# 1. Fire a test incident with actionable runbook
+chmod +x scripts/test-alert.sh
+./scripts/test-alert.sh
 
-The current Prometheus rules cover:
+# 2. Check Discord to view the actionable incident card
 
-- Proxmox exporter availability
-- Availability of expected-running Proxmox LXC guests
-- High CPU usage on the Proxmox node
-- High CPU usage on Proxmox guests
-- Home Assistant HTTP availability
+# 3. Send a resolved notification to close out the test incident
+./scripts/test-alert.sh resolve
+```
 
-The stopped Kubernetes lab VMs, Ubuntu template, and inactive Proxmox Home Assistant VM are intentionally excluded from guest-down alerts.
-
-Home Assistant is monitored separately through an HTTP probe. A failed probe must persist for two minutes before the critical alert fires.
-
-Alertmanager sends notifications through a Discord webhook and can send resolved notifications as well.
-
-## Configuration as code
-
-Key configuration files:
+## Repository Structure
 
 ```text
 .
@@ -78,112 +99,58 @@ Key configuration files:
 ├── .gitignore
 ├── compose.yaml
 ├── alertmanager/
-│   └── alertmanager.yml
+│   ├── alertmanager.yml         # Alert routing & Discord incident templates
+│   └── discord-webhook-url      # (Secret) Target webhook URL
 ├── alloy/
-│   └── config.alloy
+│   └── config.alloy             # Docker discovery, log parsing & level extraction
 ├── blackbox/
-│   └── blackbox.yml
+│   └── blackbox.yml             # HTTP probe modules
 ├── grafana/
 │   ├── dashboards/
-│   │   └── home-lab.json
+│   │   └── home-lab.json        # Pre-provisioned Homelab dashboard
 │   └── provisioning/
 │       ├── dashboards/
 │       │   └── dashboards.yaml
 │       └── datasources/
 │           └── datasources.yaml
 ├── loki/
-│   └── loki-config.yaml
-└── prometheus/
-    ├── prometheus.yml
-    └── rules/
-        └── homelab.yml
+│   └── loki-config.yaml         # Retention, storage, and TSDB schema config
+├── prometheus/
+│   ├── prometheus.yml           # Scrape targets and rule file references
+│   └── rules/
+│       └── homelab.yml          # Availability, CPU, and log-based alert rules
+└── scripts/
+    └── test-alert.sh            # End-to-end alert verification utility
 ```
 
-Grafana dashboards and data sources are provisioned from files. Prometheus alert rules are stored alongside its scrape configuration.
+## Deployment & Verification
 
-## Deployment
-
-### Prerequisites
-
-- A Linux host or LXC with Docker Engine and Docker Compose
-- Network access to the Proxmox API and Home Assistant
-- A Proxmox API token with appropriate read-only monitoring permissions
-- A Discord webhook if Discord notifications are desired
-
-### 1. Configure environment variables
-
-Create a local `.env` based on `.env.example` and fill in the real credentials:
-
-```bash
-cp .env.example .env
-chmod 600 .env
-```
-
-Review every variable referenced by `compose.yaml` and ensure it has a valid value.
-
-### 2. Configure the Discord webhook
-
-Create `alertmanager/discord-webhook-url` containing only the webhook URL, on a single line. Restrict access to this file and ensure its ownership and permissions permit the Alertmanager container to read it.
-
-Never commit this file or share its contents.
-
-### 3. Review environment-specific settings
-
-Update the Proxmox target, Home Assistant URL, node name, and any other environment-specific values in the configuration files.
-
-Review the Proxmox exporter's TLS settings before deploying outside a trusted lab network.
-
-### 4. Validate and start
-
+### 1. Apply Changes
+On the host or LXC container:
 ```bash
 docker compose config -q
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
 
-Check service status and logs:
+### 2. Verify Log Enrichment
+In Grafana (`http://192.168.1.99:3000`), open **Explore** -> select **Loki** and query:
+```logql
+{job="docker"} | level = "error"
+```
+Or filter by container name:
+```logql
+{container="prometheus"}
+```
 
+### 3. Verify Prometheus Rules
 ```bash
-docker compose ps
-docker compose logs --tail=100
+docker compose exec prometheus promtool check rules /etc/prometheus/rules/homelab.yml
 ```
-
-### 5. Validate Prometheus rules
-
-```bash
-docker compose exec prometheus \
-  promtool check rules /etc/prometheus/rules/homelab.yml
-```
-
-Open the Prometheus Targets page and verify that the Proxmox and Home Assistant targets are healthy.
 
 ## Security
 
-- `.env` and the Discord webhook file are excluded from version control.
-- `.env.example` contains placeholders only.
-- Prometheus, Grafana, and Loki use Docker-managed persistent volumes in this deployment.
-- Rotate credentials if they may have been exposed.
-- Review network access controls before exposing any monitoring endpoint beyond the trusted LAN.
-- TLS certificate verification for the Proxmox exporter is currently disabled in this lab configuration. This should be improved before production use.
+- `.env` and `alertmanager/discord-webhook-url` are kept outside version control.
+- Docker containers run with read-only configuration mounts (`:ro`).
+- Sensitive Alertmanager webhooks are read from isolated filesystem paths (`webhook_url_file`).
+- Network ports are bound to internal management IPs (`192.168.1.99`).
 
-## Persistence and recovery
-
-Prometheus, Grafana, and Loki use Docker named volumes for persistent data. Alloy has a local state directory.
-
-Back up the named volumes and configuration files according to your recovery requirements. A Git repository stores configuration, not the monitoring history or Grafana's live database.
-
-## Roadmap
-
-- [x] Proxmox metrics collection
-- [x] Grafana dashboards provisioned from files
-- [x] Centralized Docker logs with Alloy and Loki
-- [x] Alertmanager with Discord notifications
-- [x] Home Assistant HTTP availability monitoring
-- [x] Alert rules excluding intentionally stopped guests
-- [ ] Improve Proxmox TLS verification
-- [ ] Document backup and restore testing
-- [ ] Add a repeatable end-to-end alert test
-- [ ] Add screenshots of dashboards and alert delivery
-
-## License
-
-Choose a license before publishing this repository. If you intend others to reuse the project, an OSI-approved license such as MIT is a common option.

@@ -9,16 +9,20 @@ route:
   group_interval: 5m
   repeat_interval: 4h
 
-#receivers:
-#  - name: discord
-#    discord_configs:
-#      - webhook_url: "${DISCORD_WEBHOOK_URL}"
-#        send_resolved: true
-#        title: '{{ template "discord.default.title" . }}'
-#        message: '{{ template "discord.default.message" . }}'
-
 receivers:
   - name: discord
     discord_configs:
       - webhook_url_file: /run/secrets/discord_webhook_url
         send_resolved: true
+        title: '{{ if eq .Status "firing" }}🔥 [ALERT: {{ .CommonLabels.severity | toUpper }}]{{ else }}✅ [RESOLVED]{{ end }} {{ .CommonLabels.alertname }}'
+        message: |
+          {{ range .Alerts }}
+          **Summary:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}**📖 Runbook:** `{{ .Annotations.runbook }}`{{ end }}
+          {{ if .Annotations.action }}**⚡ Action:** `{{ .Annotations.action }}`{{ end }}
+          {{ if .Annotations.dashboard }}**📊 Dashboard:** [View Metrics]({{ .Annotations.dashboard }}){{ end }}
+          **Severity:** `{{ .Labels.severity }}` | **Started:** `{{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}`
+          ---
+          {{ end }}
+

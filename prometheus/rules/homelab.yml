@@ -9,6 +9,8 @@ groups:
         annotations:
           summary: "Proxmox exporter is unreachable"
           description: "Prometheus has been unable to scrape the Proxmox exporter for more than 2 minutes."
+          runbook: "Check container logs: `docker compose logs --tail=50 pve-exporter`. Verify Proxmox host network and API credentials."
+          dashboard: "http://192.168.1.99:3000/d/homelab/homelab-overview"
 
       - alert: ProxmoxGuestDown
         #expr: pve_up{id=~"lxc/.*|qemu/.*"} == 0
@@ -20,6 +22,19 @@ groups:
         annotations:
           summary: "Proxmox guest {{ $labels.id }} is down"
           description: "Proxmox reports guest {{ $labels.id }} as down for more than 3 minutes."
+          runbook: "Check guest status in Proxmox console (https://192.168.1.35:8006) or run `pct status <id>` on node."
+          action: "Restart guest: `pct start <id>` or investigate host OOM events."
+
+      - alert: HomeAssistantDown
+        expr: probe_success{job="home-assistant"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Home Assistant is unreachable"
+          description: "The Home Assistant web interface at 192.168.1.2:8123 has failed its HTTP probe for more than 2 minutes."
+          runbook: "Verify Home Assistant core status: `ha core check` or `ping 192.168.1.2`."
+          action: "Check supervisor logs and host container availability."
 
   - name: homelab-resource-usage
     rules:
@@ -31,6 +46,7 @@ groups:
         annotations:
           summary: "Proxmox node CPU usage is high"
           description: "Node VFIEVOX3 CPU usage has exceeded 90% for 10 minutes."
+          runbook: "Check top CPU consumers on node via SSH: `htop` or Proxmox dashboard."
 
       - alert: ProxmoxGuestHighCPU
         expr: pve_cpu_usage_ratio{id=~"lxc/.*|qemu/.*"} > 0.90
@@ -40,13 +56,19 @@ groups:
         annotations:
           summary: "High CPU usage on {{ $labels.id }}"
           description: "Guest {{ $labels.id }} CPU usage has exceeded 90% for 15 minutes."
+          runbook: "Inspect container/VM internal processes or throttle allocated cores in PVE."
 
-
-      - alert: HomeAssistantDown
-        expr: probe_success{job="home-assistant"} == 0
+  - name: homelab-log-alerts
+    rules:
+      - alert: ContainerErrorLogSpike
+        expr: |
+          sum by (container) (rate(loki_log_messages_total{level=~"error|fatal|critical"}[5m])) > 0.5
         for: 2m
         labels:
-          severity: critical
+          severity: warning
         annotations:
-          summary: "Home Assistant is unreachable"
-          description: "The Home Assistant web interface at 192.168.1.2:8123 has failed its HTTP probe for more than 2 minutes."
+          summary: "Error spike in container {{ $labels.container }}"
+          description: "Container {{ $labels.container }} is generating sustained ERROR/CRITICAL logs (> 0.5 msgs/sec for 2m)."
+          runbook: "Open Grafana Explore logs: http://192.168.1.99:3000/explore?left=%7B%22datasource%22:%22loki%22,%22queries%22:[%7B%22expr%22:%22%7Bcontainer%3D%5C%22{{ $labels.container }}%5C%22%7D%20%7C%3D%20%5C%22error%5C%22%22%7D]%7D"
+          action: "Inspect recent stack traces: `docker compose logs --tail=100 {{ $labels.container }}`."
+
