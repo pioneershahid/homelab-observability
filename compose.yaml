@@ -73,6 +73,8 @@ services:
       - ./alloy/data:/var/lib/alloy/data
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "192.168.1.99:1514:1514/udp"
     networks:
       - monitoring
 

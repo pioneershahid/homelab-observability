@@ -63,9 +63,8 @@ loki.process "docker" {
   // Promote level and container to indexed labels
   stage.labels {
     values = {
-      level     = "",
-      container = "",
-      service   = "",
+      level     = "level",
+      container = "container",
     }
   }
 
@@ -77,5 +76,19 @@ loki.source.file "docker" {
   targets    = discovery.relabel.docker_logs.output
   forward_to = [loki.process.docker.receiver]
 }
+
+// Syslog receiver for Proxmox, Home Assistant, and external LXCs
+loki.source.syslog "remote_syslog" {
+  listener {
+    address  = "0.0.0.0:1514"
+    protocol = "udp"
+    labels   = {
+      job = "syslog",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
 
 

@@ -147,10 +147,27 @@ Or filter by container name:
 docker compose exec prometheus promtool check rules /etc/prometheus/rules/homelab.yml
 ```
 
+### 4. Remote Syslog for Proxmox VE & External LXCs
+Alloy listens on UDP port `1514` (`192.168.1.99:1514`) for remote syslog messages.
+
+To forward logs from the **Proxmox VE host** (`192.168.1.35`) or any other LXC/VM, create `/etc/rsyslog.d/60-loki.conf`:
+```text
+*.* @192.168.1.99:1514
+```
+Then restart rsyslog:
+```bash
+systemctl restart rsyslog
+```
+Query in Grafana Explore:
+```logql
+{job="syslog"}
+```
+
 ## Security
 
 - `.env` and `alertmanager/discord-webhook-url` are kept outside version control.
 - Docker containers run with read-only configuration mounts (`:ro`).
 - Sensitive Alertmanager webhooks are read from isolated filesystem paths (`webhook_url_file`).
 - Network ports are bound to internal management IPs (`192.168.1.99`).
+
 
