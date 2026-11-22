@@ -10,10 +10,14 @@ services:
     container_name: prometheus
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=10GB
+      - --web.enable-lifecycle
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -28,13 +32,18 @@ services:
     container_name: grafana
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - prometheus
       - loki
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -49,6 +58,8 @@ services:
     container_name: loki
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     command:
       - -config.file=/etc/loki/loki-config.yaml
     volumes:
@@ -79,14 +90,17 @@ services:
       - monitoring
 
   pve-exporter:
-    image: prompve/prometheus-pve-exporter:latest
+    # Pin by setting PVE_EXPORTER_TAG in .env (version tag or @sha256:... digest is not valid here; use a tag).
+    image: prompve/prometheus-pve-exporter:${PVE_EXPORTER_TAG:-latest}
     container_name: pve-exporter
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     environment:
-      PVE_USER: ${PVE_USER}
-      PVE_TOKEN_NAME: ${PVE_TOKEN_NAME}
-      PVE_TOKEN_VALUE: ${PVE_TOKEN_VALUE}
+      PVE_USER: ${PVE_USER:?PVE_USER must be set in .env}
+      PVE_TOKEN_NAME: ${PVE_TOKEN_NAME:?PVE_TOKEN_NAME must be set in .env}
+      PVE_TOKEN_VALUE: ${PVE_TOKEN_VALUE:?PVE_TOKEN_VALUE must be set in .env}
       PVE_VERIFY_SSL: "false"
     networks:
       - monitoring
@@ -96,6 +110,7 @@ services:
     container_name: blackbox-exporter
     restart: unless-stopped
     logging: *default-logging
+    # no-new-privileges intentionally omitted: ICMP probes rely on file capabilities.
     networks:
       - monitoring
     command:
@@ -108,6 +123,8 @@ services:
     container_name: alertmanager
     restart: unless-stopped
     logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "192.168.1.99:9093:9093"
     command:
@@ -115,11 +132,11 @@ services:
       - --storage.path=/alertmanager
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - ./alertmanager/discord-webhook-url:/run/secrets/discord_webhook_url:ro
       - alertmanager_data:/alertmanager
+    secrets:
+      - discord_webhook_url
     networks:
       - monitoring
-
 
 networks:
   monitoring:
@@ -130,3 +147,7 @@ volumes:
   grafana_data:
   loki_data:
   alertmanager_data:
+
+secrets:
+  discord_webhook_url:
+    file: ./alertmanager/discord-webhook-url
